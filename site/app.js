@@ -209,7 +209,7 @@ fetch("teams.json?v=" + Date.now())
 function route() {
   const [tab, arg, arg2] = (location.hash.slice(1) || "home").split("/");
   document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-  const view = { home, lineup, players, partners, schedule, scouting, about }[tab] || home;
+  const view = { home, practice, lineup, players, partners, schedule, scouting, about }[tab] || home;
   $("#app").innerHTML = "";
   view(arg, arg2);
   window.scrollTo(0, 0);
@@ -1166,6 +1166,173 @@ function scheduleExtras() {
         <td class="num"><b>${played.length ? (played.reduce((a, b) => a + b, 0) / played.length).toFixed(1) : "–"}</b></td></tr>`;
     }).join("")}</tbody></table></div>`);
 }
+
+/* ------------------------------------------------------------ PRACTICE */
+/* Wednesday practice RSVPs (6–8 PM). Replaces "like the text" in the group chat, which doesn't work across iPhone/Android.
+   Answers live in a Google Sheet behind a small Apps Script web app (scripts/practice_rsvp.gs has the setup steps).
+   Shared by both teams: same list whichever team is selected. */
+const PRACTICE_API = ""; // paste the Apps Script web app URL (ends in /exec)
+const PRACTICE = { day: 3, start: 18, end: 20, label: "6–8 PM" }; // Wednesday
+const PR = { date: null, list: [], loaded: false, err: "", timer: null };
+const prNameKey = "frogPracticeName";
+
+/** Next practice date in Chicago time: today if it's Wednesday before 8 PM, else the coming Wednesday. */
+function nextPracticeDate() {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const d = new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day, 12));
+  let add = (PRACTICE.day - d.getUTCDay() + 7) % 7;
+  if (add === 0 && +parts.hour >= PRACTICE.end) add = 7;
+  d.setUTCDate(d.getUTCDate() + add);
+  return { iso: d.toISOString().slice(0, 10), daysAway: add };
+}
+
+function prApi(params) {
+  const q = new URLSearchParams({ ...params, t: Date.now() });
+  return fetch(`${PRACTICE_API}?${q}`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then((j) => (j.ok ? j : Promise.reject(new Error(j.error || "failed"))));
+}
+
+function prLoad(draw) {
+  const date = PR.date;
+  return prApi({ action: "list", date })
+    .then((j) => {
+      if (PR.date !== date) return;
+      PR.list = j.rsvps; PR.loaded = true; PR.err = "";
+    })
+    .catch(() => (PR.err = "Couldn't reach the RSVP list. Check your connection and reload."))
+    .finally(draw);
+}
+
+function practiceIcs() {
+  // Weekly recurring calendar event so people get a reminder on their own phone.
+  const first = nextPracticeDate().iso.replace(/-/g, "");
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Frog Pickleball//Practice//EN", "BEGIN:VEVENT",
+    `UID:frog-practice-${first}@mhdstudios`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`,
+    `DTSTART;TZID=America/Chicago:${first}T180000`, `DTEND;TZID=America/Chicago:${first}T200000`,
+    "RRULE:FREQ=WEEKLY;BYDAY=WE", "SUMMARY:Frog pickleball practice",
+    `DESCRIPTION:RSVP: ${location.origin + location.pathname}#practice`,
+    "BEGIN:VALARM", "TRIGGER:-PT3H", "ACTION:DISPLAY", "DESCRIPTION:Frog practice tonight. RSVP on the team site", "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  a.download = "frog-practice.ics";
+  a.click();
+}
+
+function practice() {
+  const { iso, daysAway } = nextPracticeDate();
+  if (PR.date !== iso) Object.assign(PR, { date: iso, list: [], loaded: false, err: "" });
+  const when = daysAway === 0 ? "Tonight" : daysAway === 1 ? "Tomorrow" : `In ${daysAway} days`;
+  const el = section(`<h2>Wednesday practice</h2><div id="pr"></div>`);
+  const box = el.querySelector("#pr");
+  let name = localStorage.getItem(prNameKey) || "";
+  let note = "";
+  let busy = false;
+  let flash = "";
+
+  if (!PRACTICE_API) {
+    box.innerHTML = `<div class="card"><p><b>Almost ready.</b> RSVPs need a one-time setup (about 3 minutes): follow the steps at the top of
+      <code>scripts/practice_rsvp.gs</code>, then paste the web app URL into <code>PRACTICE_API</code> in <code>site/app.js</code>.</p></div>`;
+    return;
+  }
+
+  function draw() {
+    if (!box.isConnected) return;
+    const by = { in: [], maybe: [], out: [] };
+    PR.list.forEach((r) => by[r.status] && by[r.status].push(r));
+    Object.values(by).forEach((a) => a.sort((x, y) => x.updated.localeCompare(y.updated)));
+    const nIn = by.in.length, courts = Math.floor(nIn / 4), extra = nIn % 4;
+    const mine = PR.list.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
+    const courtLine = !PR.loaded ? "Loading…"
+      : nIn === 0 ? "Nobody's in yet. Be the first."
+      : courts === 0 ? `Need ${4 - nIn} more for a full court.`
+      : `Enough for ${courts} court${courts > 1 ? "s" : ""}` + (extra ? `, ${extra} rotating in (${4 - extra} more fills another court).` : ".");
+    const names = [...new Set((D.players || []).map((p) => p.name))].sort();
+    const person = (r) => `<li><button class="prname" data-n="${esc(r.name)}" title="Change this answer">${esc(r.name)}</button>${r.note ? ` <span class="muted small">· ${esc(r.note)}</span>` : ""}</li>`;
+    const col = (key, title) => `<div class="card prcol ${key}"><h3>${title} <span class="prcount">${by[key].length}</span></h3>
+      ${by[key].length ? `<ol class="prlist">${by[key].map(person).join("")}</ol>` : `<p class="muted small">No one yet.</p>`}</div>`;
+
+    box.innerHTML = `
+      <div class="card prhero">
+        <div class="prwhen"><div class="prbig">${fmtDate(iso, false)}</div><div class="muted">${when} · ${PRACTICE.label}</div></div>
+        <div class="prstats">
+          <div><div class="prnum">${PR.loaded ? nIn : "–"}</div><div class="muted small">in</div></div>
+          <div><div class="prnum">${PR.loaded ? by.maybe.length : "–"}</div><div class="muted small">maybe</div></div>
+          <div><div class="prnum">${PR.loaded ? by.out.length : "–"}</div><div class="muted small">out</div></div>
+        </div>
+        <p class="prcourts">${courtLine}</p>
+      </div>
+      ${PR.err ? `<div class="alert bad">${esc(PR.err)}</div>` : ""}
+      <div class="card prform">
+        <h3>${mine ? `You're marked <span class="pill ${mine.status === "in" ? "yes" : mine.status === "out" ? "no" : "maybe"}">${{ in: "In", maybe: "Maybe", out: "Out" }[mine.status]}</span>. Change it?` : "Are you coming?"}</h3>
+        <label class="small muted" for="prn">Your name</label>
+        <input id="prn" list="prnames" autocomplete="name" maxlength="40" placeholder="First and last name" value="${esc(name)}">
+        <datalist id="prnames">${names.map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+        <label class="small muted" for="prnote">Note (optional)</label>
+        <input id="prnote" maxlength="80" placeholder="e.g. there at 6:30, bringing a friend" value="${esc(note)}">
+        <div class="prbtns">
+          <button class="prb in" data-s="in" ${busy ? "disabled" : ""}>I'm in</button>
+          <button class="prb maybe" data-s="maybe" ${busy ? "disabled" : ""}>Maybe</button>
+          <button class="prb out" data-s="out" ${busy ? "disabled" : ""}>Can't make it</button>
+        </div>
+        ${flash ? `<p class="small prflash">${esc(flash)}</p>` : ""}
+      </div>
+      <div class="grid g3">${col("in", "In")}${col("maybe", "Maybe")}${col("out", "Out")}</div>
+      <div class="prtools">
+        <button class="btn ghost" id="prshare">Share in the group chat</button>
+        <button class="btn ghost" id="prcal">Add weekly reminder to calendar</button>
+      </div>
+      <p class="small muted">Tap a name to change that answer. The list updates on its own every minute. One list for both teams.</p>`;
+
+    const nameIn = box.querySelector("#prn"), noteIn = box.querySelector("#prnote");
+    nameIn.addEventListener("input", () => (name = nameIn.value));
+    nameIn.addEventListener("change", () => draw());
+    noteIn.addEventListener("input", () => (note = noteIn.value));
+    box.querySelectorAll(".prb").forEach((b) => b.addEventListener("click", () => submit(b.dataset.s)));
+    box.querySelectorAll(".prname").forEach((b) => b.addEventListener("click", () => {
+      const r = PR.list.find((x) => x.name === b.dataset.n);
+      name = r.name; note = r.note || ""; flash = "";
+      draw();
+      box.querySelector(".prform").scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+    box.querySelector("#prcal").addEventListener("click", practiceIcs);
+    box.querySelector("#prshare").addEventListener("click", () => {
+      const url = `${location.origin}${location.pathname}#practice`;
+      const text = `Frog practice ${fmtDate(iso, false)}, ${PRACTICE.label}. ${nIn} in so far. RSVP here:`;
+      if (navigator.share) navigator.share({ text, url }).catch(() => {});
+      else navigator.clipboard.writeText(`${text} ${url}`).then(() => { flash = "Copied. Paste it in the group chat."; draw(); });
+    });
+  }
+
+  function submit(status) {
+    const n = name.trim().replace(/\s+/g, " ");
+    if (!n) { flash = "Type your name first."; draw(); box.querySelector("#prn").focus(); return; }
+    localStorage.setItem(prNameKey, n);
+    name = n; busy = true; flash = "Saving…";
+    // Show it right away; the server's answer replaces it a moment later.
+    const rest = PR.list.filter((r) => r.name.toLowerCase() !== n.toLowerCase());
+    PR.list = [...rest, { name: n, status, note: note.trim(), updated: new Date().toISOString() }];
+    draw();
+    prApi({ action: "set", date: iso, name: n, status, note: note.trim() })
+      .then((j) => { PR.list = j.rsvps; PR.err = ""; flash = { in: "You're in. See you Wednesday!", maybe: "Marked maybe.", out: "Got it, you're out this week." }[status]; note = ""; })
+      .catch(() => { flash = "Didn't save. Check your connection and try again."; return prLoad(() => {}); })
+      .finally(() => { busy = false; draw(); });
+  }
+
+  draw();
+  prLoad(draw);
+  clearInterval(PR.timer);
+  PR.timer = setInterval(() => {
+    if (!box.isConnected) return clearInterval(PR.timer);
+    if (!busy && !box.contains(document.activeElement)) prLoad(draw); // don't redraw under someone typing
+  }, 60000);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && location.hash.startsWith("#practice") && PRACTICE_API) route();
+});
 
 /* ------------------------------------------------------------ ABOUT */
 function about() {
