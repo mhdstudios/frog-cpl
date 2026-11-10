@@ -1172,11 +1172,31 @@ function scheduleExtras() {
 }
 
 /* ------------------------------------------------------------ PRACTICE */
-/* Wednesday practice (6–8 PM). Read live from the "Practice Schedule" section at the bottom of the 3.0 tab,
-   same as availability: dates in column B, the same player columns as the league weeks, Yes / No / Maybe in the cells.
-   People mark themselves in the sheet; the site just shows who's coming. Same list whichever team is selected. */
-const PRACTICE = { day: 3, end: 20, label: "6–8 PM", gid: "993438883" }; // 3.0 tab
-const PR = { rows: null, names: [], err: "", timer: null };
+/* Team practice. Read live from the "Practice Schedule" section at the bottom of the selected team's sheet tab,
+   same as availability: day + time in the header's column B ("Wed Night 6pm-8pm"), dates in column B below it, the same
+   player columns as the league weeks, Yes / No / Maybe in the cells. People mark themselves in the sheet; the site just
+   shows who's coming. A team whose tab has no such section gets a how-to instead. */
+const PRACTICE_DEFAULT = { day: 3, start: 18, end: 20, label: "6–8 PM" }; // Wednesday 6–8 PM
+let PRACTICE = { ...PRACTICE_DEFAULT };
+const PR = { team: null, rows: null, names: [], missing: false, err: "", timer: null };
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/** Day and hours from the section header, e.g. "Wed Night 6pm-8pm", "Thursday 7-9 PM". Falls back to Wednesday 6–8 PM. */
+function practiceConfig(label) {
+  const v = (label || "").toLowerCase();
+  const cfg = { ...PRACTICE_DEFAULT };
+  const d = DAYS.findIndex((x) => new RegExp(`\\b${x.slice(0, 3)}`).test(v));
+  if (d >= 0) cfg.day = d;
+  const t = /(\d{1,2})(?::(\d\d))?\s*(am|pm)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d\d))?\s*(am|pm)?/.exec(v);
+  if (t) {
+    const ap2 = t[6] || "pm", ap1 = t[3] || ap2;
+    const h = (x, ap) => (+x % 12) + (ap === "pm" ? 12 : 0);
+    cfg.start = h(t[1], ap1); cfg.end = h(t[4], ap2);
+    const f = (x, mm, ap) => `${+x}${mm ? ":" + mm : ""}`;
+    cfg.label = ap1 === ap2 ? `${f(t[1], t[2])}–${f(t[4], t[5])} ${ap2.toUpperCase()}` : `${f(t[1], t[2])} ${ap1.toUpperCase()}–${f(t[4], t[5])} ${ap2.toUpperCase()}`;
+  }
+  return cfg;
+}
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 /** Upcoming practice dates in Chicago time: today if it's Wednesday before 8 PM, else the coming Wednesday. */
@@ -1211,17 +1231,27 @@ function practiceSheetId() {
   return m && m[1];
 }
 
+function practiceGid() {
+  const m = /gid=(\d+)/.exec(D.sheetUrl || "");
+  return m ? m[1] : "0";
+}
+
 function prLoad(draw) {
   const id = practiceSheetId();
   if (!id) return;
-  return fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${PRACTICE.gid}&t=${Date.now()}`)
+  const team = TEAM_LEVEL;
+  if (PR.team !== team) Object.assign(PR, { team, rows: null, names: [], missing: false, err: "" }), (PRACTICE = { ...PRACTICE_DEFAULT });
+  return fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${practiceGid()}&t=${Date.now()}`)
     .then((r) => (r.ok ? r.text() : Promise.reject()))
     .then((text) => {
       const rows = parseCsv(text);
       const low = (r, i) => (r[i] || "").trim().toLowerCase();
       const hi = rows.findIndex((r) => low(r, 0) === "week"); // the player-name header row, shared with the league weeks
       const pi = rows.findIndex((r) => low(r, 0).startsWith("practice"));
-      if (hi < 0 || pi < 0) throw new Error("no practice section");
+      if (PR.team !== TEAM_LEVEL) return; // switched teams meanwhile
+      if (hi < 0 || pi < 0) { PR.missing = true; PR.rows = []; PR.err = ""; return; }
+      PR.missing = false;
+      PRACTICE = practiceConfig(rows[pi].slice(0, 3).join(" "));
       PR.names = rows[hi].map((h, c) => (c < 2 || /match info|start time|address/i.test(h) ? "" : h.trim().replace(/\s+/g, " ")));
       const out = [];
       for (const r of rows.slice(pi + 1)) {
@@ -1257,8 +1287,8 @@ function practiceIcs() {
   const first = practiceDates(1)[0].iso.replace(/-/g, "");
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Frog Pickleball//Practice//EN", "BEGIN:VEVENT",
     `UID:frog-practice-${first}@mhdstudios`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`,
-    `DTSTART;TZID=America/Chicago:${first}T180000`, `DTEND;TZID=America/Chicago:${first}T200000`,
-    "RRULE:FREQ=WEEKLY;BYDAY=WE", "SUMMARY:Frog pickleball practice",
+    `DTSTART;TZID=America/Chicago:${first}T${String(PRACTICE.start).padStart(2, "0")}0000`, `DTEND;TZID=America/Chicago:${first}T${String(PRACTICE.end).padStart(2, "0")}0000`,
+    `RRULE:FREQ=WEEKLY;BYDAY=${DAYS[PRACTICE.day].slice(0, 2).toUpperCase()}`, `SUMMARY:Frog ${TEAM_LEVEL} practice`,
     `DESCRIPTION:Who's coming: ${location.origin + location.pathname}#practice`,
     "BEGIN:VALARM", "TRIGGER:-PT3H", "ACTION:DISPLAY", "DESCRIPTION:Frog practice tonight", "END:VALARM",
     "END:VEVENT", "END:VCALENDAR"].join("\r\n");
@@ -1269,20 +1299,32 @@ function practiceIcs() {
 }
 
 function practice() {
-  const el = section(`<h2>Wednesday practice</h2><div id="pr"></div>`);
+  const el = section(`<h2 id="prh">Practice</h2><div id="pr"></div>`);
   const box = el.querySelector("#pr");
-  const sheetLink = `https://docs.google.com/spreadsheets/d/${practiceSheetId()}/edit#gid=${PRACTICE.gid}`;
+  const sheetLink = `https://docs.google.com/spreadsheets/d/${practiceSheetId()}/edit#gid=${practiceGid()}`;
   let flash = "";
 
   function draw() {
     if (!box.isConnected) return;
+    const dayName = DAYS[PRACTICE.day][0].toUpperCase() + DAYS[PRACTICE.day].slice(1);
+    el.querySelector("#prh").textContent = `${TEAM_LEVEL} team · ${PR.missing ? "practice" : dayName + " practice"}`;
+    if (PR.missing) {
+      box.innerHTML = `<div class="card"><p><b>The ${esc(TEAM_LEVEL)} team doesn't have a practice list in its sheet tab yet.</b></p>
+        <p class="muted">To add one, scroll to the bottom of the <b>${esc(TEAM_LEVEL)}</b> tab and add:</p>
+        <ol class="muted"><li>A row with <b>Practice Schedule</b> in column A and the day and time in column B, like <i>Wed Night 6pm-8pm</i>.</li>
+          <li>One practice date per row under it, in column B (like <i>Nov 11</i>).</li>
+          <li>People type Yes, No or Maybe under their own name, the same columns as the league weeks.</li></ol>
+        <p class="muted">This page picks it up as soon as it's there. The 3.0 tab has an example.</p>
+        <a class="btn" href="${esc(sheetLink)}" target="_blank" rel="noopener">Open the ${esc(TEAM_LEVEL)} tab</a></div>`;
+      return;
+    }
     const [next, ...later] = practiceDates(4);
     const { row, by } = practiceFor(next);
     const loaded = PR.rows !== null;
     const nIn = by.yes.length, courts = Math.floor(nIn / 4), extra = nIn % 4;
     const when = next.daysAway === 0 ? "Tonight" : next.daysAway === 1 ? "Tomorrow" : `In ${next.daysAway} days`;
     const courtLine = !loaded ? "Loading…"
-      : !row ? `No row for ${fmtDate(next.iso, false)} in the sheet yet. Add it in column A.`
+      : !row ? `No row for ${fmtDate(next.iso, false)} in the sheet yet. Add the date in column B of the Practice Schedule.`
       : nIn === 0 ? "Nobody's in yet. Be the first."
       : courts === 0 ? `Need ${4 - nIn} more for a full court.`
       : `Enough for ${courts} court${courts > 1 ? "s" : ""}` + (extra ? `, ${extra} rotating in (${4 - extra} more fills another court).` : ".");
@@ -1308,20 +1350,20 @@ function practice() {
       ${PR.err ? `<div class="alert bad">${esc(PR.err)}</div>` : ""}
       <div class="grid g3">${col("yes", "In", "in")}${col("maybe", "Maybe", "maybe")}${col("no", "Out", "out")}</div>
       <h3 style="margin-top:20px">Coming weeks</h3>
-      <div class="card"><table class="sc"><thead><tr><th>Wednesday</th><th class="num">In</th><th class="num">Maybe</th></tr></thead><tbody>${laterRows}</tbody></table></div>
+      <div class="card"><table class="sc"><thead><tr><th>${dayName}</th><th class="num">In</th><th class="num">Maybe</th></tr></thead><tbody>${laterRows}</tbody></table></div>
       <div class="prtools">
         <button class="btn ghost" id="prshare">Share in the group chat</button>
         <button class="btn ghost" id="prcal">Add weekly reminder to calendar</button>
       </div>
       ${flash ? `<p class="small prflash">${esc(flash)}</p>` : ""}
-      <p class="small muted">How to sign up: open the 3.0 tab of the team sheet, scroll to <b>Practice Schedule</b> at the bottom, and type Yes, No or Maybe
-        in your column on that Wednesday's row (a note after it is fine, like "Yes, there at 6:30"). Not on the sheet? Add your name in the next empty column of the name row.
+      <p class="small muted">How to sign up: open the ${esc(TEAM_LEVEL)} tab of the team sheet, scroll to <b>Practice Schedule</b> at the bottom, and type Yes, No or Maybe
+        in your column on that date's row (a note after it is fine, like "Yes, there at 6:30"). Not on the sheet? Add your name in the next empty column of the name row.
         This page reads the sheet live and refreshes every minute.</p>`;
 
     box.querySelector("#prcal").addEventListener("click", practiceIcs);
     box.querySelector("#prshare").addEventListener("click", () => {
       const url = `${location.origin}${location.pathname}#practice`;
-      const text = `Frog practice ${fmtDate(next.iso, false)}, ${PRACTICE.label}. ${nIn} in so far. Mark yourself here:`;
+      const text = `Frog ${TEAM_LEVEL} practice ${fmtDate(next.iso, false)}, ${PRACTICE.label}. ${nIn} in so far. Mark yourself here:`;
       if (navigator.share) navigator.share({ text, url }).catch(() => {});
       else navigator.clipboard.writeText(`${text} ${url}`).then(() => { flash = "Copied. Paste it in the group chat."; draw(); });
     });
