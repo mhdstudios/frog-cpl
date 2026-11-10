@@ -101,7 +101,7 @@ tr.us td { background: var(--frog-soft); font-weight: 650; }
 .bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--frog); }
 .rating { font-weight: 700; font-variant-numeric: tabular-nums; }
 .pos { color: var(--good); } .neg { color: var(--bad); }
-.btn { background: var(--frog); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font-size: 16px; font-weight: 700; cursor: pointer; }
+.btn { display: inline-block; text-decoration: none; background: var(--frog); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font-size: 16px; font-weight: 700; cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--frog); border: 1.5px solid var(--frog); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 select, input[type=number] { font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
@@ -175,15 +175,7 @@ body[data-team="3.0"] .tabs a.on { box-shadow: inset 0 3px 0 #146f12; }
 .prstats { display: flex; gap: 22px; text-align: center; }
 .prnum { font-size: 32px; font-weight: 750; line-height: 1.1; }
 .prstats > div:first-child .prnum { color: var(--good); }
-.prcourts { flex-basis: 100%; margin: 0; font-weight: 600; color: var(--ink2); }
-.prform { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.prform input { font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; max-width: 420px; }
-.prbtns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; max-width: 520px; }
-.prb { border: 0; border-radius: 10px; padding: 13px 8px; font-size: 16px; font-weight: 750; cursor: pointer; }
-.prb.in { background: var(--good-bg); color: var(--good); }
-.prb.maybe { background: var(--warn-bg); color: var(--warn); }
-.prb.out { background: var(--bad-bg); color: var(--bad); }
-.prb:disabled { opacity: .5; cursor: wait; }
+.prcourts { flex-basis: 100%; margin: 0 0 4px; font-weight: 600; color: var(--ink2); }
 .prflash { margin: 4px 0 0; font-weight: 600; }
 .prcol h3 { display: flex; align-items: center; gap: 8px; }
 .prcount { font-size: 13px; padding: 1px 9px; border-radius: 99px; background: var(--mid); color: var(--ink2); }
@@ -192,6 +184,4 @@ body[data-team="3.0"] .tabs a.on { box-shadow: inset 0 3px 0 #146f12; }
 .prcol.out .prcount { background: var(--bad-bg); color: var(--bad); }
 .prlist { margin: 0; padding-left: 22px; }
 .prlist li { padding: 3px 0; }
-.prname { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-align: left; }
-.prname:hover { text-decoration: underline; }
 .prtools { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
