@@ -408,8 +408,12 @@ function manualEditorHTML(wk) {
   const auto = D.posted[wk.matchupId]?.them || [];
   const manual = loadManual(wk.matchupId);
   const roster = Object.entries(D.league).filter(([, p]) => p.t === wk.opp).sort((a, b) => a[1].n.localeCompare(b[1].n));
-  const opts = (g, sel) => `<option value="">—</option>` + roster.filter(([, p]) => p.g === g)
-    .map(([id, p]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${esc(p.n)}</option>`).join("");
+  // A posted player who isn't on their regular roster list (a sub, or gender missing) still gets an option, so the box never shows "—" for a known pair.
+  const opts = (g, sel) => {
+    const list = roster.filter(([, p]) => p.g === g);
+    if (sel && !list.some(([id]) => id === sel)) list.unshift([sel, D.league[sel] || { n: "Unknown player" }]);
+    return `<option value="">—</option>` + list.map(([id, p]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${esc(p.n)}</option>`).join("");
+  };
   const filled = Array.from({ length: 32 }, (_, n) => auto[n] || (manual[n] && manual[n][0] && manual[n][1])).filter(Boolean).length;
   let rows = "";
   for (let r = 0; r < 8; r++) {
