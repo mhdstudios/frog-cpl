@@ -324,7 +324,7 @@ function home() {
     const noReply = D.players.filter((p) => !p.isSub && !nm.avail[p.id]).map((p) => p.id);
     let alert = "";
     if (ym < 4 || yw < 4)
-      alert = `<div class="alert ${ym < 4 && yw < 4 ? "bad" : "warn"}">⚠️ Only <b>${ym} men</b> and <b>${yw} women</b> confirmed. A full lineup needs <b>4 men + 4 women</b>; 5 + 5 is the most that still gives everyone 6+ games. ${
+      alert = `<div class="alert ${ym < 4 && yw < 4 ? "bad" : "warn"}">⚠️ Only <b>${ym} men</b> and <b>${yw} women</b> confirmed. A full lineup needs <b>4 men + 4 women</b>. ${
         maybe.length ? `Maybes: ${maybe.map(label).join(", ")}. ` : ""
       }Time to chase subs.</div>`;
     else alert = `<div class="alert good">✅ ${ym} men and ${yw} women confirmed — enough for a full lineup.</div>`;
@@ -504,7 +504,7 @@ function lineup(arg, auto) {
       </div>
       ${statusAll}
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
-      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule). Someone who wants breaks can write a number after Yes on the sheet (<b>Yes 3</b> = sit out 3 games), or pick it under their name below.
+      <p class="small muted" style="margin:10px 0 0">Nobody sits out. Everyone plays at least ${MIN_GAMES} of the 8 games (with 6+ of a gender, the 32 spots are shared evenly, e.g. 6 men play 5–6 each), same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule). Someone who wants breaks can write a number after Yes on the sheet (<b>Yes 3</b> = sit out 3 games), or pick it under their name below.
         With 4 men + 4 women everyone plays all 8.</p>
       <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> everyone marked <b>In</b> on the sheet is checked, gaps are filled from Maybes then subs, and the best lineup is built below.
         Change any box and it rebuilds. Same data → same lineup for everyone.</p>
@@ -586,9 +586,10 @@ function lineup(arg, auto) {
       })
     );
     const m = [...LU.sel].filter(isMale).length, w = LU.sel.size - m;
-    const over = [m > MAX_FOR_MIN ? `${m} men` : "", w > MAX_FOR_MIN ? `${w} women` : ""].filter(Boolean).join(" and ");
+    const share = (n, g) => (n > MAX_FOR_MIN ? `${n} ${g} share ${32} spots, so each plays ${Math.floor(32 / n)}${32 % n ? "–" + Math.ceil(32 / n) : ""} games` : "");
+    const over = [share(m, "men"), share(w, "women")].filter(Boolean).join("; ");
     $("#luCount").innerHTML = `${m} men · ${w} women` + (m < 4 || w < 4 ? ` — <b class="neg">need at least 4 + 4</b>`
-      : over ? ` — ${over} available, so the plan sits out ${[m > MAX_FOR_MIN ? m - MAX_FOR_MIN + (m - MAX_FOR_MIN > 1 ? " men" : " man") : "", w > MAX_FOR_MIN ? w - MAX_FOR_MIN + (w - MAX_FOR_MIN > 1 ? " women" : " woman") : ""].filter(Boolean).join(" and ")} to keep everyone else at ${MIN_GAMES}+ games` : "");
+      : over ? ` — nobody sits out: ${over}` : "");
     $("#luGo").disabled = m < 4 || w < 4;
     $("#luFill").hidden = !(m < 4 || w < 4);
     showTopPairs([...LU.sel], lastChecked);
@@ -697,32 +698,16 @@ function seededRng(seedStr) {
  */
 /** How many must sit the whole match so everyone else still gets 6+ of the 32 spots,
  *  counting players who asked for sit-outs at what they asked for. */
-function benchNeeded(g, sits = {}) {
+function minGamesFor(g, sits = {}) {
+  // Nobody sits a whole match. With more than 5 of a gender, the 32 spots are shared out evenly,
+  // so the floor drops below 6 (6 men: 5 or 6 games each). Players who asked for breaks are counted at what they asked for.
   const req = g.filter((id) => sits[id] != null);
   const reqGames = req.reduce((a, id) => a + (8 - sits[id]), 0);
   const free = g.length - req.length;
-  return Math.max(0, Math.min(free, Math.ceil((reqGames + MIN_GAMES * free - 32) / MIN_GAMES)));
+  return free ? Math.max(1, Math.min(MIN_GAMES, Math.floor((32 - reqGames) / free))) : MIN_GAMES;
 }
 function autoLineup(men, women, opts) {
-  const choose = (arr, k) => (k === 0 ? [[]] : arr.flatMap((x, i) => choose(arr.slice(i + 1), k - 1).map((c) => [x, ...c])));
-  const sits = opts.sits || {};
-  const sitOptions = (g) => {
-    const extra = benchNeeded(g, sits);
-    if (extra <= 0) return [[]];
-    const r = (id) => (P[id] ? P[id].rating : -1) || 0;
-    const pool = g.filter((id) => sits[id] == null).sort((a, b) => r(a) - r(b)).slice(0, extra + 2);
-    return choose(pool, extra);
-  };
-  const mOpts = sitOptions(men), wOpts = sitOptions(women);
-  if (mOpts.length * wOpts.length === 1) return optimize(men, women, opts);
-  let best = null;
-  for (const sm of mOpts)
-    for (const sw of wOpts) {
-      const m = men.filter((x) => !sm.includes(x)), w = women.filter((x) => !sw.includes(x));
-      const q = optimize(m, w, { ...opts, quick: true });
-      if (!best || q.s.val > best.val) best = { val: q.s.val, m, w };
-    }
-  return optimize(best.m, best.w, opts);
+  return optimize(men, women, opts); // everyone checked in plays; nobody is benched
 }
 
 function optimize(men, women, { mode, plan, seed = "frog", quick = false, sits = {} }) {
@@ -802,14 +787,11 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false, sits =
     for (const g of [men, women]) {
       // Asked for sit-outs: play exactly 8 minus what they asked for. Strong, but below the CPL pair rule.
       for (const id of g) if (sits[id] != null) sitMiss += Math.abs((gc.get(id) || 0) - (8 - sits[id]));
-      // More than 5 available: the extras sit out (5 is the most that still gives everyone 6+ of the 32 spots).
-      // The search decides who sits by what wins the most games.
+      // Everyone checked in plays. More than 5 of a gender: the 32 spots are shared out evenly instead of benching anyone.
       const free = g.filter((id) => sits[id] == null);
-      const allowedBench = benchNeeded(g, sits);
-      const counts = free.map((id) => gc.get(id) || 0).sort((a, b) => a - b);
-      let excused = 0;
-      const n = counts.filter((x) => (x === 0 && excused < allowedBench ? (excused++, false) : true));
-      for (const x of n) if (x < MIN_GAMES) pen += (MIN_GAMES - x) ** 2 * 2; // everyone who plays gets 6+; shortfalls get spread out
+      const floor = minGamesFor(g, sits);
+      const n = free.map((id) => gc.get(id) || 0);
+      for (const x of n) if (x < floor) pen += (floor - x) ** 2 * 2; // everyone plays: nobody under the floor (6, or the even share when more than 5 are in)
       if (mode === "even" && n.length) {
         const spread = Math.max(...n) - Math.min(...n);
         if (spread > 1) pen += (spread - 1) * 1.0;
@@ -948,7 +930,7 @@ function showLineup(best, wk, plan, selected = [], sits = {}) {
     ${s.pen > 0.01 && !s.pairOver && !s.sitMiss ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
     <div class="row" style="margin:12px 0"><button class="btn ghost" id="luCopy">Copy lineup as text</button>
 </div>
-    ${sitting.length ? `<div class="alert warn">🪑 <b>Sitting out:</b> ${sitting.map((id) => esc(lname(id))).join(", ")} — more players are in than can each get ${MIN_GAMES} games, and this choice wins the most games. Uncheck someone else if you'd rather they sit.</div>` : ""}
+    ${sitting.length ? `<div class="alert bad">🪑 <b>No games for:</b> ${sitting.map((id) => esc(lname(id))).join(", ")}. Hit Rebuild; if it stays, uncheck someone.</div>` : ""}
     <h3 style="margin-top:16px">Rosters</h3>
     <div class="grid g2">${rosterHTML(Object.keys(counts), counts, "Frog Pickleball")}${theirIds.length ? rosterHTML(theirIds, theirCounts, wk.opp) : `<div class="card"><h3>${esc(wk.opp)}</h3><p class="muted">Their roster appears here once they post their lineup.</p></div>`}</div>
     <h3 style="margin-top:16px">Scorecard</h3>
@@ -1396,9 +1378,9 @@ function about() {
       It's shrunk toward 0 for pairs with only a game or two.</p>
     <h3>Game Plan (lineup builder)</h3>
     <p>CPL matches are 32 games: 8 rounds of 4 games, one game per court. Rounds 1, 3, 5, 7 are 4 mixed games; rounds 2, 4, 6, 8 are 2 women's + 2 men's games. Each player plays at most once per round, so 8 games is the max.
-      <b>It's automatic:</b> it starts from everyone marked In on the sheet, fills any gap from Maybes then subs (flagged so you can confirm), and if more than 5 men or 5 women are in, it sits out whoever
-      helps least so everyone else still gets 6+ games. The same data always gives the same lineup, so every teammate sees the same plan.
-      The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games — so 5 men + 5 women is the most you can bring and still give everyone 6).
+      <b>It's automatic:</b> it starts from everyone marked In on the sheet, fills any gap from Maybes then subs (flagged so you can confirm), and everyone checked in plays: if more than 5 men or 5 women are in,
+      the 32 spots are shared evenly (6 men play 5–6 games each) instead of benching anyone. The same data always gives the same lineup, so every teammate sees the same plan.
+      The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games when 5 or fewer of a gender are in, and an even share when more are).
       Lineup timing: the <b>away</b> team locks its lineup by Thu 8pm; the <b>home</b> team sees it and sets theirs by Fri 8pm, deciding who plays whom.
       When we're <b>home</b>, the site picks up their locked lineup within an hour (it checks hourly Thu–Sat) and matches each of our pairs against the exact pair they'll face.
       When we're <b>away</b>, we post blind, so the lineup is built to hold up even if their captain rearranges their pairs against ours. Win chances are estimates — a 60% pair still loses 4 out of 10.
