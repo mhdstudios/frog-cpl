@@ -506,8 +506,8 @@ function lineup(arg, auto) {
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
       <p class="small muted" style="margin:10px 0 0">Nobody sits out. Everyone plays at least ${MIN_GAMES} of the 8 games (with 6+ of a gender, the 32 spots are shared evenly, e.g. 6 men play 5–6 each), same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule). Someone who wants breaks can write a number after Yes on the sheet (<b>Yes 3</b> = sit out 3 games), or pick it under their name below.
         With 4 men + 4 women everyone plays all 8.</p>
-      <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> everyone marked <b>In</b> on the sheet is checked, gaps are filled from Maybes then subs, and the best lineup is built below.
-        Change any box and it rebuilds. Same data → same lineup for everyone.</p>
+      <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> only players marked <b>In</b> on the sheet are checked, and the best lineup is built below once there are 4 men and 4 women.
+        Nobody who said Maybe or hasn't replied is added unless you check them (or press <b>Fill the gaps</b>). Change any box and it rebuilds. Same data → same lineup for everyone.</p>
       <div id="luPick" style="margin-top:8px"></div>
       <div class="row" style="margin-top:14px"><button class="btn" id="luGo">Rebuild</button>
         <button class="btn ghost" id="luFill" hidden data-tip="Adds Maybes first, then the strongest subs who haven't replied. Never adds anyone marked Out.">Fill the gaps</button>
@@ -616,7 +616,12 @@ function lineup(arg, auto) {
   let buildTimer = null;
   const build = () => {
     if ($("#luGo").disabled) {
-      $("#luOut").innerHTML = `<div class="alert bad">Need at least 4 men and 4 women checked to build a lineup.</div>`;
+      const m = [...LU.sel].filter(isMale).length, w = LU.sel.size - m;
+      const short = [m < 4 ? `${4 - m} more ${4 - m === 1 ? "man" : "men"}` : "", w < 4 ? `${4 - w} more ${4 - w === 1 ? "woman" : "women"}` : ""].filter(Boolean).join(" and ");
+      const maybes = D.players.filter((p) => p.gender && !LU.sel.has(p.id) && availFor(wk, p.id) === "maybe").map((p) => sn(p.id));
+      $("#luOut").innerHTML = `<div class="alert bad">⚠️ Only <b>${m} men and ${w} women</b> are In on the sheet. We need <b>${short}</b> before a lineup can be built.
+        ${maybes.length ? `Maybes to chase: ${maybes.map(esc).join(", ")}.` : ""} Once they mark Yes on the sheet, reload and the lineup builds itself.
+        To plan with someone who hasn't confirmed, check their box or press <b>Fill the gaps</b>.</div>`;
       return;
     }
     const men = [...LU.sel].filter(isMale), women = [...LU.sel].filter((id) => !isMale(id));
@@ -631,8 +636,7 @@ function lineup(arg, auto) {
     buildTimer = setTimeout(build, 700);
   };
   $("#luGo").addEventListener("click", build);
-  // Automatic: fill gaps if we're short, then build right away — no clicks needed.
-  if (!$("#luFill").hidden) fillGaps();
+  // Automatic: build from the sheet's In players only. If we're short, say so; never opt anyone in on their behalf.
   build();
 }
 
@@ -1378,7 +1382,7 @@ function about() {
       It's shrunk toward 0 for pairs with only a game or two.</p>
     <h3>Game Plan (lineup builder)</h3>
     <p>CPL matches are 32 games: 8 rounds of 4 games, one game per court. Rounds 1, 3, 5, 7 are 4 mixed games; rounds 2, 4, 6, 8 are 2 women's + 2 men's games. Each player plays at most once per round, so 8 games is the max.
-      <b>It's automatic:</b> it starts from everyone marked In on the sheet, fills any gap from Maybes then subs (flagged so you can confirm), and everyone checked in plays: if more than 5 men or 5 women are in,
+      <b>It's automatic:</b> it starts from everyone marked In on the sheet, never adds anyone who hasn't said Yes (if we're short of 4 men + 4 women it says who's missing; you can check a Maybe or sub yourself, or press Fill the gaps), and everyone checked in plays: if more than 5 men or 5 women are in,
       the 32 spots are shared evenly (6 men play 5–6 games each) instead of benching anyone. The same data always gives the same lineup, so every teammate sees the same plan.
       The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games when 5 or fewer of a gender are in, and an even share when more are).
       Lineup timing: the <b>away</b> team locks its lineup by Thu 8pm; the <b>home</b> team sees it and sets theirs by Fri 8pm, deciding who plays whom.
